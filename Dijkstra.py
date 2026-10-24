@@ -6,7 +6,6 @@ import math
 
 # --- CLASES DEL MODELO ---
 
-
 class Nodo:
     """Clase que representa un nodo dentro del grafo."""
 
