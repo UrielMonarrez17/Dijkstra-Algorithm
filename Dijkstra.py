@@ -106,91 +106,167 @@ class Grafo:
 
 
 class AplicacionDijkstra(tk.Tk):
+    # Parámetros de la animación del camino
+    ANIM_PASO_MS = 450      # Tiempo entre un nodo iluminado y el siguiente
+    ANIM_FINAL_MS = 1600    # Tiempo que se muestra el camino completo resaltado
+    ANIM_PAUSA_MS = 500     # Pausa antes de reiniciar el bucle
+    COLOR_BASE_ARISTA = "#999999"
+    COLOR_ARISTA_ILUMINADA = "#2b5cff"
+    COLOR_NODO_ILUMINADO = "#a2d2ff"
+    COLOR_NODO_ACTUAL = "#ff9f1c"
+    COLOR_FINAL = "#ff2e93"          # Color llamativo del camino completo
+    COLOR_FINAL_NODO = "#ffc2dd"
+
     def __init__(self):
         super().__init__()
-        self.title("Algoritmo de Dijkstra - Grafo Dirigido N x N")
-        self.geometry("1100x700")  # Corregido aquí
+        self.title("Algoritmo de Dijkstra - Grafo Dirigido N x M")
+        self._ajustar_ventana()
+        self._redibujo_pendiente = None
 
-        self.n = 0
+        self.filas = 0      # N
+        self.columnas = 0   # M
         self.grafo = None
         self.nodo_inicio = None
         self.nodo_fin = None
+        self.modo_clic = tk.StringVar(value="inicio")  # "inicio" | "fin" | "editar"
         self.camino_actual = []
         self.costo_actual = float("inf")
+        self._anim_job = None   # id del after() pendiente
+        self._anim_paso = 0     # cuántos nodos del camino se han iluminado
 
         self._crear_pantalla_inicial()
 
+    def _ajustar_ventana(self, espacio=50):
+        """Dimensiona la ventana al tamaño de la pantalla dejando `espacio` px por lado."""
+        ancho_pantalla = self.winfo_screenwidth()
+        alto_pantalla = self.winfo_screenheight()
+        ancho = max(600, ancho_pantalla - 2 * espacio)
+        alto = max(400, alto_pantalla - 2 * espacio)
+        self.geometry(f"{ancho}x{alto}+{espacio}+{espacio}")
+        self.minsize(600, 400)
+
+    def _on_canvas_resize(self, event):
+        """Redibuja el grafo cada vez que el canvas cambia de tamaño (incluida la carga inicial)."""
+        if self._redibujo_pendiente is not None:
+            self.after_cancel(self._redibujo_pendiente)
+        self._redibujo_pendiente = self.after(50, self._redibujo_diferido)
+
+    def _redibujo_diferido(self):
+        self._redibujo_pendiente = None
+        if self.grafo is not None:
+            self.redibujar_grafo()
+
     def _crear_pantalla_inicial(self):
-        """Frame inicial para solicitar el tamaño N x N."""
+        """Frame inicial para solicitar el tamaño N x M (filas x columnas)."""
         self.frame_inicio = ttk.Frame(self)
         self.frame_inicio.pack(expand=True)
 
-        lbl = ttk.Label(
+        ttk.Label(
             self.frame_inicio,
-            text="¿Cuánto va a medir la Grid (N x N)?",
+            text="¿Cuánto va a medir la Grid (N x M)?",
             font=("Arial", 16),
-        )
-        lbl.pack(pady=10)
+        ).pack(pady=10)
 
-        self.ent_n = ttk.Entry(
-            self.frame_inicio, font=("Arial", 14), width=10, justify="center"
-        )
-        self.ent_n.pack(pady=10)
-        self.ent_n.focus()
+        frame_campos = ttk.Frame(self.frame_inicio)
+        frame_campos.pack(pady=10)
 
-        btn = ttk.Button(
+        # Filas (N)
+        col_filas = ttk.Frame(frame_campos)
+        col_filas.pack(side=tk.LEFT, padx=15)
+        ttk.Label(col_filas, text="Filas (N)", font=("Arial", 11)).pack()
+        self.ent_filas = ttk.Entry(
+            col_filas, font=("Arial", 14), width=8, justify="center"
+        )
+        self.ent_filas.pack(pady=5)
+
+        ttk.Label(frame_campos, text="x", font=("Arial", 16, "bold")).pack(
+            side=tk.LEFT, pady=(20, 0)
+        )
+
+        # Columnas (M)
+        col_cols = ttk.Frame(frame_campos)
+        col_cols.pack(side=tk.LEFT, padx=15)
+        ttk.Label(col_cols, text="Columnas (M)", font=("Arial", 11)).pack()
+        self.ent_columnas = ttk.Entry(
+            col_cols, font=("Arial", 14), width=8, justify="center"
+        )
+        self.ent_columnas.pack(pady=5)
+
+        self.ent_filas.focus()
+
+        # Enter genera el grafo desde cualquiera de los dos campos
+        self.ent_filas.bind("<Return>", lambda e: self.ent_columnas.focus())
+        self.ent_columnas.bind("<Return>", lambda e: self._inicializar_grafo())
+
+        ttk.Button(
             self.frame_inicio, text="Generar Grafo", command=self._inicializar_grafo
-        )
-        btn.pack(pady=10)
+        ).pack(pady=10)
 
     def _inicializar_grafo(self):
         try:
-            val = int(self.ent_n.get())
-            if val < 2:
-                messagebox.showerror("Error", "El tamaño debe ser al menos 2x2.")
-                return
-            self.n = val
+            filas = int(self.ent_filas.get())
+            columnas = int(self.ent_columnas.get())
         except ValueError:
-            messagebox.showerror("Error", "Ingresa un número entero válido.")
+            messagebox.showerror("Error", "Ingresa números enteros válidos.")
             return
+
+        if filas < 1 or columnas < 1:
+            messagebox.showerror("Error", "Filas y columnas deben ser al menos 1.")
+            return
+        if filas * columnas < 2:
+            messagebox.showerror("Error", "La grid debe tener al menos 2 nodos.")
+            return
+
+        self.filas = filas
+        self.columnas = columnas
 
         self.frame_inicio.destroy()
 
-        # Construir Grafo Dirigido N x N
+        # Construir Grafo Dirigido N x M
         self.grafo = Grafo()
-        for r in range(self.n):
-            for c in range(self.n):
-                etiqueta = r * self.n + c + 1
+        for r in range(self.filas):
+            for c in range(self.columnas):
+                etiqueta = r * self.columnas + c + 1
                 self.grafo.agregar_nodo(etiqueta, c, r)
 
         # Conexiones dirigidas en 4 direcciones con pesos aleatorios
-        for r in range(self.n):
-            for c in range(self.n):
-                curr = r * self.n + c + 1
+        for r in range(self.filas):
+            for c in range(self.columnas):
+                curr = r * self.columnas + c + 1
                 # Derecha
-                if c + 1 < self.n:
-                    self.grafo.agregar_arista_dirigida(curr, r * self.n + (c + 1) + 1)
+                if c + 1 < self.columnas:
+                    self.grafo.agregar_arista_dirigida(
+                        curr, r * self.columnas + (c + 1) + 1
+                    )
                 # Izquierda
                 if c - 1 >= 0:
-                    self.grafo.agregar_arista_dirigida(curr, r * self.n + (c - 1) + 1)
+                    self.grafo.agregar_arista_dirigida(
+                        curr, r * self.columnas + (c - 1) + 1
+                    )
                 # Abajo
-                if r + 1 < self.n:
-                    self.grafo.agregar_arista_dirigida(curr, (r + 1) * self.n + c + 1)
+                if r + 1 < self.filas:
+                    self.grafo.agregar_arista_dirigida(
+                        curr, (r + 1) * self.columnas + c + 1
+                    )
                 # Arriba
                 if r - 1 >= 0:
-                    self.grafo.agregar_arista_dirigida(curr, (r - 1) * self.n + c + 1)
+                    self.grafo.agregar_arista_dirigida(
+                        curr, (r - 1) * self.columnas + c + 1
+                    )
 
         self._crear_interfaz_principal()
 
     def _crear_interfaz_principal(self):
-        # Panel Izquierdo: Lienzo (Canvas)
-        self.canvas = tk.Canvas(self, bg="white", width=750, height=680)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
-        self.canvas.bind("<Button-1>", self._on_canvas_click)
-
         # Panel Derecho: Edición de pesos e información
+        # (se empaqueta primero para que el canvas no lo desplace ni lo recorte)
         self.panel_control = ttk.Frame(self, width=300)
         self.panel_control.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+
+        # Panel Izquierdo: Lienzo (Canvas) que ocupa todo el espacio restante
+        self.canvas = tk.Canvas(self, bg="white", width=400, height=400)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
 
         lbl_info = ttk.Label(
             self.panel_control, text="CONTROLES Y EDICIÓN", font=("Arial", 12, "bold")
@@ -198,17 +274,41 @@ class AplicacionDijkstra(tk.Tk):
         lbl_info.pack(anchor="w", pady=5)
 
         instrucciones = (
-            "• Clic en Nodo:\n"
-            "  1° Clic: Inicio (Verde)\n"
-            "  2° Clic: Fin (Rojo)\n"
-            "  Siguientes: Seleccionar para editar pesos\n\n"
+            "• Elige un modo y haz clic en un nodo.\n"
+            "  Inicio y Fin se pueden cambiar las\n"
+            "  veces que quieras.\n\n"
             "• Modificar Pesos:\n"
-            "  Selecciona un nodo y cambia\n"
-            "  los pesos de sus conexiones salientes."
+            "  En modo \"Editar pesos\" selecciona un\n"
+            "  nodo y cambia sus conexiones salientes."
         )
         ttk.Label(self.panel_control, text=instrucciones, font=("Arial", 9)).pack(
             anchor="w", pady=5
         )
+
+        # Selector del modo de clic
+        frame_modo = ttk.LabelFrame(self.panel_control, text="Al hacer clic en un nodo")
+        frame_modo.pack(fill="x", pady=5)
+        ttk.Radiobutton(
+            frame_modo,
+            text="Definir Inicio (verde)",
+            variable=self.modo_clic,
+            value="inicio",
+        ).pack(anchor="w", padx=8, pady=2)
+        ttk.Radiobutton(
+            frame_modo,
+            text="Definir Fin (rojo)",
+            variable=self.modo_clic,
+            value="fin",
+        ).pack(anchor="w", padx=8, pady=2)
+        ttk.Radiobutton(
+            frame_modo,
+            text="Editar pesos",
+            variable=self.modo_clic,
+            value="editar",
+        ).pack(anchor="w", padx=8, pady=2)
+        ttk.Button(
+            frame_modo, text="Limpiar Inicio y Fin", command=self._limpiar_inicio_fin
+        ).pack(fill="x", padx=8, pady=(6, 8))
 
         self.lbl_ruta = ttk.Label(
             self.panel_control,
@@ -238,6 +338,12 @@ class AplicacionDijkstra(tk.Tk):
 
         self.redibujar_grafo()
 
+    def _calcular_celdas(self, w, h, margin=50):
+        """Tamaño de celda horizontal y vertical según filas (N) y columnas (M)."""
+        cell_w = (w - 2 * margin) / max(1, self.columnas - 1)
+        cell_h = (h - 2 * margin) / max(1, self.filas - 1)
+        return margin, cell_w, cell_h
+
     def _recalcular_dijkstra(self):
         if self.nodo_inicio and self.nodo_fin:
             self.camino_actual, self.costo_actual = self.grafo.dijkstra(
@@ -247,15 +353,18 @@ class AplicacionDijkstra(tk.Tk):
             self.camino_actual, self.costo_actual = [], float("inf")
 
     def redibujar_grafo(self):
+        self._detener_animacion()
         self.canvas.delete("all")
         self._recalcular_dijkstra()
 
         # Dimensiones y escalado
-        w = self.canvas.winfo_width() or 750
-        h = self.canvas.winfo_height() or 680
-        margin = 50
-        cell_w = (w - 2 * margin) / max(1, self.n - 1)
-        cell_h = (h - 2 * margin) / max(1, self.n - 1)
+        # Antes de mostrarse, Tk reporta 1 px; en ese caso se usa el tamaño solicitado
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w <= 1 or h <= 1:
+            w = self.canvas.winfo_reqwidth()
+            h = self.canvas.winfo_reqheight()
+        margin, cell_w, cell_h = self._calcular_celdas(w, h)
 
         # Mapear coordenadas de los nodos
         coords = {}
@@ -264,7 +373,17 @@ class AplicacionDijkstra(tk.Tk):
             y = margin + nodo.gy * cell_h
             coords[nodo.etiqueta] = (x, y)
 
-        conjunto_camino = set(self.camino_actual)
+        # Aristas del camino óptimo (para identificarlas con una etiqueta y animarlas)
+        aristas_camino = {
+            (self.camino_actual[i].etiqueta, self.camino_actual[i + 1].etiqueta)
+            for i in range(len(self.camino_actual) - 1)
+        }
+
+        radio = 18  # Radio de los nodos
+        desplazamiento = 6  # Separación entre flechas de sentidos opuestos
+        # Distancia a recortar en cada extremo para que la flecha termine
+        # en el borde del nodo (y no quede oculta debajo del círculo)
+        recorte = math.sqrt(radio**2 - desplazamiento**2) + 2
 
         # 1. Dibujar Aristas Dirigidas
         for u, vecinos in self.grafo.adyacencia.items():
@@ -272,36 +391,36 @@ class AplicacionDijkstra(tk.Tk):
             for v, peso in vecinos.items():
                 x2, y2 = coords[v.etiqueta]
 
-                # Comprobar si la arista forma parte de la ruta óptima
-                es_del_camino = False
-                for i in range(len(self.camino_actual) - 1):
-                    if self.camino_actual[i] == u and self.camino_actual[i + 1] == v:
-                        es_del_camino = True
-                        break
-
-                color = "#2b5cff" if es_del_camino else "#cccccc"
-                grosor = 3 if es_del_camino else 1
+                # Las aristas del camino se etiquetan para iluminarlas después
+                tag_arista = (
+                    f"arista_{u.etiqueta}_{v.etiqueta}"
+                    if (u.etiqueta, v.etiqueta) in aristas_camino
+                    else ""
+                )
 
                 # Desplazar ligeramente líneas paralelas opuestas para que no se traslapen
                 dx, dy = x2 - x1, y2 - y1
                 dist = math.hypot(dx, dy)
-                if dist == 0:
+                if dist <= 2 * recorte:
                     continue
-                nx, ny = -dy / dist * 6, dx / dist * 6
+                ux, uy = dx / dist, dy / dist  # Vector unitario u -> v
+                nx, ny = -uy * desplazamiento, ux * desplazamiento
 
-                sx, sy = x1 + nx, y1 + ny
-                ex, ey = x2 + nx, y2 + ny
+                # Extremos recortados al borde de cada nodo
+                sx, sy = x1 + nx + ux * recorte, y1 + ny + uy * recorte
+                ex, ey = x2 + nx - ux * recorte, y2 + ny - uy * recorte
 
-                # Dibujar flecha dirigida
+                # Dibujar flecha dirigida (punta en el nodo destino)
                 self.canvas.create_line(
                     sx,
                     sy,
                     ex,
                     ey,
                     arrow=tk.LAST,
-                    arrowshape=(8, 10, 3),
-                    fill=color,
-                    width=grosor,
+                    arrowshape=(12, 14, 5),
+                    fill=self.COLOR_BASE_ARISTA,
+                    width=1,
+                    tags=(tag_arista,) if tag_arista else (),
                 )
 
                 # Etiqueta con el Peso
@@ -314,7 +433,6 @@ class AplicacionDijkstra(tk.Tk):
                 )
 
         # 2. Dibujar Nodos
-        radio = 18
         for nodo in self.grafo.nodos.values():
             x, y = coords[nodo.etiqueta]
 
@@ -323,8 +441,6 @@ class AplicacionDijkstra(tk.Tk):
                 color = "#2ecc71"  # Inicio (Verde)
             elif nodo == self.nodo_fin:
                 color = "#e74c3c"  # Fin (Rojo)
-            elif nodo in conjunto_camino:
-                color = "#a2d2ff"  # En camino (Azul claro)
 
             self.canvas.create_oval(
                 x - radio,
@@ -334,6 +450,7 @@ class AplicacionDijkstra(tk.Tk):
                 fill=color,
                 outline="black",
                 width=2,
+                tags=(f"nodo_{nodo.etiqueta}",),
             )
             self.canvas.create_text(
                 x, y, text=str(nodo.etiqueta), font=("Arial", 10, "bold")
@@ -348,13 +465,133 @@ class AplicacionDijkstra(tk.Tk):
             self.lbl_ruta.config(text="Ruta: No encontrada / No seleccionada")
             self.lbl_costo.config(text="Costo Total: -")
 
+        self._iniciar_animacion()
+
+    # --- ANIMACIÓN DEL CAMINO ---
+
+    def _detener_animacion(self):
+        if self._anim_job is not None:
+            self.after_cancel(self._anim_job)
+            self._anim_job = None
+
+    def _iniciar_animacion(self):
+        """Arranca el bucle de animación si hay un camino con al menos una arista."""
+        self._detener_animacion()
+        self._anim_paso = 0
+        if len(self.camino_actual) >= 2:
+            self._anim_job = self.after(self.ANIM_PAUSA_MS, self._animar_tick)
+
+    def _animar_tick(self):
+        """Un paso del bucle: ilumina nodo a nodo, resalta el camino completo y reinicia."""
+        self._anim_job = None
+        camino = self.camino_actual
+        n = len(camino)
+        if n < 2:
+            return
+
+        if self._anim_paso < n:
+            self._iluminar_nodo(self._anim_paso)
+            self._anim_paso += 1
+            espera = self.ANIM_PASO_MS
+        elif self._anim_paso == n:
+            self._resaltar_camino_completo()
+            self._anim_paso += 1
+            espera = self.ANIM_FINAL_MS
+        else:
+            self._limpiar_iluminacion()
+            self._anim_paso = 0
+            espera = self.ANIM_PAUSA_MS
+
+        self._anim_job = self.after(espera, self._animar_tick)
+
+    def _iluminar_nodo(self, k):
+        """Ilumina el nodo k del camino y la arista que llega hasta él."""
+        camino = self.camino_actual
+        if k == 0:
+            self._limpiar_iluminacion()
+        else:
+            previo = camino[k - 1]
+            self.canvas.itemconfig(f"arista_{previo.etiqueta}_{camino[k].etiqueta}",
+                                   fill=self.COLOR_ARISTA_ILUMINADA, width=3)
+            # El nodo anterior queda iluminado (azul claro) y deja de ser el "actual"
+            self._pintar_nodo(previo, actual=False)
+        self._pintar_nodo(camino[k], actual=True)
+
+    def _pintar_nodo(self, nodo, actual):
+        tag = f"nodo_{nodo.etiqueta}"
+        if actual:
+            self.canvas.itemconfig(tag, outline=self.COLOR_NODO_ACTUAL, width=4)
+        else:
+            self.canvas.itemconfig(tag, outline="black", width=2)
+        # Inicio y Fin conservan su color; el resto se ilumina al ser recorrido
+        if nodo != self.nodo_inicio and nodo != self.nodo_fin:
+            self.canvas.itemconfig(tag, fill=self.COLOR_NODO_ILUMINADO)
+
+    def _resaltar_camino_completo(self):
+        """Pinta todo el camino con un color llamativo al llegar al final."""
+        camino = self.camino_actual
+        for i in range(len(camino) - 1):
+            self.canvas.itemconfig(
+                f"arista_{camino[i].etiqueta}_{camino[i + 1].etiqueta}",
+                fill=self.COLOR_FINAL,
+                width=5,
+            )
+        for nodo in camino:
+            tag = f"nodo_{nodo.etiqueta}"
+            self.canvas.itemconfig(tag, outline=self.COLOR_FINAL, width=4)
+            if nodo != self.nodo_inicio and nodo != self.nodo_fin:
+                self.canvas.itemconfig(tag, fill=self.COLOR_FINAL_NODO)
+
+    def _limpiar_iluminacion(self):
+        """Devuelve el camino a su aspecto neutro para reiniciar la animación."""
+        camino = self.camino_actual
+        for i in range(len(camino) - 1):
+            self.canvas.itemconfig(
+                f"arista_{camino[i].etiqueta}_{camino[i + 1].etiqueta}",
+                fill=self.COLOR_BASE_ARISTA,
+                width=1,
+            )
+        for nodo in camino:
+            tag = f"nodo_{nodo.etiqueta}"
+            self.canvas.itemconfig(tag, outline="black", width=2)
+            if nodo != self.nodo_inicio and nodo != self.nodo_fin:
+                self.canvas.itemconfig(tag, fill="#e0e0e0")
+
+    def _definir_inicio(self, nodo):
+        """Establece el nodo de inicio. Si coincide con el fin, se intercambian."""
+        if nodo == self.nodo_fin:
+            self.nodo_fin = self.nodo_inicio
+        self.nodo_inicio = nodo
+        self._avanzar_modo()
+
+    def _definir_fin(self, nodo):
+        """Establece el nodo de fin. Si coincide con el inicio, se intercambian."""
+        if nodo == self.nodo_inicio:
+            self.nodo_inicio = self.nodo_fin
+        self.nodo_fin = nodo
+        self._avanzar_modo()
+
+    def _avanzar_modo(self):
+        """Pasa a pedir lo que falte; si ya están ambos, cambia a editar pesos."""
+        if self.nodo_inicio is None:
+            self.modo_clic.set("inicio")
+        elif self.nodo_fin is None:
+            self.modo_clic.set("fin")
+        else:
+            self.modo_clic.set("editar")
+
+    def _limpiar_inicio_fin(self):
+        """Quita el inicio y el fin para volver a elegirlos."""
+        self.nodo_inicio = None
+        self.nodo_fin = None
+        self.modo_clic.set("inicio")
+        self.redibujar_grafo()
+
     def _on_canvas_click(self, event):
         """Detecta qué nodo se presionó con el cursor."""
         w = self.canvas.winfo_width()
         h = self.canvas.winfo_height()
-        margin = 50
-        cell_w = (w - 2 * margin) / max(1, self.n - 1)
-        cell_h = (h - 2 * margin) / max(1, self.n - 1)
+        margin, cell_w, cell_h = self._calcular_celdas(w, h)
 
         nodo_cliqueado = None
         for nodo in self.grafo.nodos.values():
@@ -367,11 +604,12 @@ class AplicacionDijkstra(tk.Tk):
         if not nodo_cliqueado:
             return
 
-        # Lógica de selección de Inicio/Fin
-        if not self.nodo_inicio:
-            self.nodo_inicio = nodo_cliqueado
-        elif not self.nodo_fin and nodo_cliqueado != self.nodo_inicio:
-            self.nodo_fin = nodo_cliqueado
+        # Lógica de selección de Inicio/Fin según el modo activo
+        modo = self.modo_clic.get()
+        if modo == "inicio":
+            self._definir_inicio(nodo_cliqueado)
+        elif modo == "fin":
+            self._definir_fin(nodo_cliqueado)
 
         # Cargar panel de edición para el nodo cliqueado
         self._mostrar_editor_nodo(nodo_cliqueado)
